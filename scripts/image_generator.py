@@ -172,7 +172,7 @@ class ImageGenerator:
             """
             
             response = openai.chat.completions.create(
-                model="gpt-4",
+                model="gpt-4o",
                 messages=[
                     {"role": "system", "content": "You are a professional e-commerce marketer specializing in Pinterest SEO."},
                     {"role": "user", "content": prompt}
