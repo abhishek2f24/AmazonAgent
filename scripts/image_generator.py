@@ -172,15 +172,15 @@ class ImageGenerator:
             """
             
             response = openai.chat.completions.create(
-                model="gpt-4o",
-                messages=[
-                    {"role": "system", "content": "You are a professional e-commerce marketer specializing in Pinterest SEO."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.7,
-                max_tokens=1000,
-                response_format={"type": "json_object"}
-            )
+                        model="gpt-4o",
+                        messages=[
+                            {"role": "system", "content": "You are a professional e-commerce marketer specializing in Pinterest SEO."},
+                            {"role": "user", "content": prompt}
+                        ],
+                        temperature=0.7,
+                        max_tokens=1000
+                    )
+
             
             seo_content = json.loads(response.choices[0].message.content)
             logging.info("Successfully generated SEO content")
