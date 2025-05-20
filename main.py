@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 from scripts.amazon_scrapper import AmazonScraper
 from scripts.image_generator import ImageGenerator
 from scripts.pinterest_poster import PinterestPoster
-
+import time
 # Set up logging
 logging.basicConfig(
     level=logging.INFO,
@@ -56,9 +56,11 @@ def main() -> None:
             try:
                 # Generate SEO content
                 seo_content = image_generator.generate_seo_content(product)
+                time.sleep(2) 
                 
                 # Generate image
                 image_path = image_generator.generate_product_image(product)
+                time.sleep(2) 
                 
                 if not image_path:
                     logging.error(f"Failed to generate image for product: {product['title']}")
