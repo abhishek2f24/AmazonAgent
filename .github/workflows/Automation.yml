@@ -94,21 +94,18 @@ jobs:
         echo "Chrome Path: $(which google-chrome)"
         echo "ChromeDriver Path: $(which chromedriver)"
         
-    - name: Test Pinterest Connection
+    - name: Test Setup
       run: |
-        python -c "
-        import os
-        from py3pin.Pinterest import Pinterest
-        try:
-            pinterest = Pinterest(email=os.getenv('PINTEREST_EMAIL'), password=os.getenv('PINTEREST_PASSWORD'))
-            boards = pinterest.boards()
-            print(f'✅ Pinterest connection successful! Found {len(boards)} boards')
-            for board in boards[:5]:
-                print(f'  - {board[\"name\"]}')
-        except Exception as e:
-            print(f'❌ Pinterest connection failed: {e}')
-            exit(1)
-        "
+        echo "🧪 Running setup tests..."
+        python test_setup.py
+        
+        if [ $? -eq 0 ]; then
+          echo "✅ Setup tests passed"
+        else
+          echo "❌ Setup tests failed"
+          echo "Check test_setup.log for details"
+          exit 1
+        fi
         
     - name: Initialize Log File
       run: |
@@ -206,6 +203,7 @@ jobs:
         name: bot-logs-${{ github.run_number }}
         path: |
           amazon_pinterest_tool.log
+          test_setup.log
           scraped_products_*.json
         if-no-files-found: warn
         retention-days: 30
