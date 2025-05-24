@@ -49,24 +49,34 @@ class AmazonPinterestBot:
         response = self.pinterest_session.post(login_url, data=login_data, headers=headers)
         return response.status_code == 200
     
-    def get_board_id(self):
-        boards_url = 'https://www.pinterest.com/resource/BoardsResource/get/'
-        params = {
-            'source_url': f'/{self.pinterest_email.split("@")[0]}/',
-            'data': json.dumps({
-                'options': {'username': self.pinterest_email.split('@')[0]},
-                'context': {}
-            })
-        }
+   def get_board_id(self):
+    boards_url = 'https://www.pinterest.com/resource/BoardsResource/get/'
+    params = {
+        'source_url': f'/{self.pinterest_email.split("@")[0]}/',
+        'data': json.dumps({
+            'options': {'username': self.pinterest_email.split('@')[0]},
+            'context': {}
+        })
+    }
+
+    response = self.pinterest_session.get(boards_url, params=params)
+    if response.status_code == 200:
+        data = response.json()
+        boards = data.get('resource_response', {}).get('data', [])
         
-        response = self.pinterest_session.get(boards_url, params=params)
-        if response.status_code == 200:
-            data = response.json()
-            boards = data.get('resource_response', {}).get('data', [])
-            for board in boards:
-                if board.get('name', '').lower() == self.board_name.lower():
-                    return board.get('id')
-        return None
+        print(f"📋 Available boards:")
+        for board in boards:
+            print(f"- {board.get('name')} (ID: {board.get('id')})")
+        
+        for board in boards:
+            if board.get('name', '').strip().lower() == self.board_name.strip().lower():
+                print(f"✅ Match found for board: {board.get('name')}")
+                return board.get('id')
+        print(f"❌ Board '{self.board_name}' not found in list.")
+    else:
+        print(f"❌ Failed to fetch boards: {response.status_code}")
+    return None
+
     
     def get_bestsellers(self, category_url):
         headers = {
