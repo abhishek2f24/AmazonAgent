@@ -110,36 +110,94 @@ jobs:
             exit(1)
         "
         
+    - name: Initialize Log File
+      run: |
+        echo "$(date): Starting Amazon to Pinterest Bot" > amazon_pinterest_tool.log
+        echo "Configuration loaded successfully" >> amazon_pinterest_tool.log
+        
+    - name: Debug Environment
+      run: |
+        echo "🔍 Debug Information:"
+        echo "Working Directory: $(pwd)"
+        echo "Python Version: $(python --version)"
+        echo "Files in directory: $(ls -la)"
+        echo "Environment variables set:"
+        echo "- PINTEREST_BOARD: $PINTEREST_BOARD"
+        echo "- MAX_PRODUCTS_PER_CATEGORY: $MAX_PRODUCTS_PER_CATEGORY"
+        echo "- DELAY_BETWEEN_PINS: $DELAY_BETWEEN_PINS"
+        echo "- Has Pinterest Email: $([[ -n "$PINTEREST_EMAIL" ]] && echo "Yes" || echo "No")"
+        echo "- Has Pinterest Password: $([[ -n "$PINTEREST_PASSWORD" ]] && echo "Yes" || echo "No")"
+        echo "- Has Affiliate Tag: $([[ -n "$AMAZON_AFFILIATE_TAG" ]] && echo "Yes" || echo "No")"
+        
+    - name: Test Python Script Import
+      run: |
+        python -c "
+        import sys
+        print('Python path:', sys.path)
+        try:
+            import selenium
+            print('✅ Selenium imported successfully')
+        except Exception as e:
+            print('❌ Selenium import failed:', e)
+        
+        try:
+            import requests
+            print('✅ Requests imported successfully')
+        except Exception as e:
+            print('❌ Requests import failed:', e)
+            
+        try:
+            from py3pin.Pinterest import Pinterest
+            print('✅ Pinterest library imported successfully')
+        except Exception as e:
+            print('❌ Pinterest library import failed:', e)
+        "
+        
     - name: Run Amazon to Pinterest Bot
       id: run_bot
       run: |
-        echo "🚀 Starting Amazon to Pinterest Bot..."
-        python amazon_pinterest_tool.py
+        echo "🚀 Starting Amazon to Pinterest Bot..." | tee -a amazon_pinterest_tool.log
+        
+        # Run the Python script and capture both stdout and stderr
+        if python amazon_pinterest_tool.py 2>&1 | tee -a amazon_pinterest_tool.log; then
+          echo "✅ Script completed successfully" | tee -a amazon_pinterest_tool.log
+          echo "script_status=success" >> $GITHUB_OUTPUT
+        else
+          echo "❌ Script failed with exit code $?" | tee -a amazon_pinterest_tool.log
+          echo "script_status=failed" >> $GITHUB_OUTPUT
+        fi
       continue-on-error: true
       
     - name: Check Bot Results
       run: |
-        if [ -f "amazon_pinterest_tool.log" ]; then
-          echo "📊 Bot Execution Summary:"
-          echo "================================"
-          grep -E "(Successfully created pin|Failed to create pin|Successfully scraped|Tool completed)" amazon_pinterest_tool.log | tail -20
-          echo "================================"
-          
-          # Count successful pins
-          SUCCESS_COUNT=$(grep -c "Successfully created pin" amazon_pinterest_tool.log || echo "0")
-          echo "✅ Total pins created: $SUCCESS_COUNT"
-          
-          # Check for errors
-          ERROR_COUNT=$(grep -c "ERROR" amazon_pinterest_tool.log || echo "0")
-          echo "❌ Total errors: $ERROR_COUNT"
-          
-          # Set outputs for summary
-          echo "pins_created=$SUCCESS_COUNT" >> $GITHUB_OUTPUT
-          echo "errors_count=$ERROR_COUNT" >> $GITHUB_OUTPUT
-        else
-          echo "❌ Log file not found"
-          exit 1
+        echo "📊 Checking bot results..."
+        
+        # Ensure log file exists
+        if [ ! -f "amazon_pinterest_tool.log" ]; then
+          echo "Creating empty log file for artifact upload"
+          echo "$(date): No log file was created - script may have failed early" > amazon_pinterest_tool.log
         fi
+        
+        # Display log file contents
+        echo "📝 Log file contents:"
+        echo "===================="
+        cat amazon_pinterest_tool.log
+        echo "===================="
+        
+        # Count results
+        SUCCESS_COUNT=$(grep -c "Successfully created pin" amazon_pinterest_tool.log 2>/dev/null || echo "0")
+        ERROR_COUNT=$(grep -c "ERROR" amazon_pinterest_tool.log 2>/dev/null || echo "0")
+        SCRAPED_COUNT=$(grep -c "Successfully scraped" amazon_pinterest_tool.log 2>/dev/null || echo "0")
+        
+        echo "📈 Results Summary:"
+        echo "✅ Total pins created: $SUCCESS_COUNT"
+        echo "📦 Total products scraped: $SCRAPED_COUNT"
+        echo "❌ Total errors: $ERROR_COUNT"
+        
+        # Set outputs for summary
+        echo "pins_created=$SUCCESS_COUNT" >> $GITHUB_OUTPUT
+        echo "errors_count=$ERROR_COUNT" >> $GITHUB_OUTPUT
+        echo "scraped_count=$SCRAPED_COUNT" >> $GITHUB_OUTPUT
         
     - name: Upload Logs as Artifact
       uses: actions/upload-artifact@v4
@@ -149,6 +207,7 @@ jobs:
         path: |
           amazon_pinterest_tool.log
           scraped_products_*.json
+        if-no-files-found: warn
         retention-days: 30
         
     - name: Clean Up Temporary Files
@@ -185,6 +244,7 @@ jobs:
       with:
         name: bot-logs-${{ github.run_number }}
         path: ./logs/
+      continue-on-error: true
         
     - name: Generate Summary
       run: |
@@ -195,9 +255,9 @@ jobs:
         echo "" >> $GITHUB_STEP_SUMMARY
         
         if [ -f "./logs/amazon_pinterest_tool.log" ]; then
-          SUCCESS_COUNT=$(grep -c "Successfully created pin" ./logs/amazon_pinterest_tool.log || echo "0")
-          ERROR_COUNT=$(grep -c "ERROR" ./logs/amazon_pinterest_tool.log || echo "0")
-          SCRAPED_COUNT=$(grep -c "Successfully scraped" ./logs/amazon_pinterest_tool.log || echo "0")
+          SUCCESS_COUNT=$(grep -c "Successfully created pin" ./logs/amazon_pinterest_tool.log 2>/dev/null || echo "0")
+          ERROR_COUNT=$(grep -c "ERROR" ./logs/amazon_pinterest_tool.log 2>/dev/null || echo "0")
+          SCRAPED_COUNT=$(grep -c "Successfully scraped" ./logs/amazon_pinterest_tool.log 2>/dev/null || echo "0")
           
           echo "## Results" >> $GITHUB_STEP_SUMMARY
           echo "- 🎯 **Pins Created**: $SUCCESS_COUNT" >> $GITHUB_STEP_SUMMARY
@@ -206,20 +266,31 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           
           # Show recent successful pins
-          echo "## Recent Successful Pins" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          grep "Successfully created pin" ./logs/amazon_pinterest_tool.log | tail -5 >> $GITHUB_STEP_SUMMARY || echo "No successful pins found"
-          echo '```' >> $GITHUB_STEP_SUMMARY
+          if [ "$SUCCESS_COUNT" -gt "0" ]; then
+            echo "## Recent Successful Pins" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            grep "Successfully created pin" ./logs/amazon_pinterest_tool.log | tail -5 >> $GITHUB_STEP_SUMMARY 2>/dev/null || echo "No successful pins found"
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          fi
           
           # Show any errors
           if [ "$ERROR_COUNT" -gt "0" ]; then
             echo "## Recent Errors" >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
-            grep "ERROR" ./logs/amazon_pinterest_tool.log | tail -3 >> $GITHUB_STEP_SUMMARY
+            grep "ERROR" ./logs/amazon_pinterest_tool.log | tail -3 >> $GITHUB_STEP_SUMMARY 2>/dev/null || echo "No detailed errors found"
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Show full log if file is small
+          LOG_SIZE=$(wc -l < ./logs/amazon_pinterest_tool.log 2>/dev/null || echo "0")
+          if [ "$LOG_SIZE" -lt "50" ]; then
+            echo "## Full Log" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            cat ./logs/amazon_pinterest_tool.log >> $GITHUB_STEP_SUMMARY 2>/dev/null || echo "Could not read log file"
             echo '```' >> $GITHUB_STEP_SUMMARY
           fi
         else
-          echo "❌ **No log file found**" >> $GITHUB_STEP_SUMMARY
+          echo "❌ **No log file found - check main job for errors**" >> $GITHUB_STEP_SUMMARY
         fi
         
         echo "" >> $GITHUB_STEP_SUMMARY
