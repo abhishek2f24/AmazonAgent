@@ -342,12 +342,25 @@ class AmazonPinterestTool:
     def run(self):
         """Main execution method"""
         logger.info("Starting Amazon to Pinterest tool")
+        logger.info(f"Configuration: {self.config}")
         
         total_pins_created = 0
+        total_products_scraped = 0
         
         try:
-            for category_url in self.config['amazon_categories']:
-                logger.info(f"Processing category: {category_url}")
+            # Test Pinterest connection first
+            logger.info("Testing Pinterest connection...")
+            try:
+                boards = self.pinterest.get_boards()
+                logger.info(f"Pinterest connection successful! Found {len(boards)} boards")
+                if self.config['pinterest_board'] not in boards:
+                    logger.warning(f"Board '{self.config['pinterest_board']}' not found. Available boards: {boards[:5]}")
+            except Exception as e:
+                logger.error(f"Pinterest connection failed: {e}")
+                return False
+            
+            for i, category_url in enumerate(self.config['amazon_categories']):
+                logger.info(f"Processing category {i+1}/{len(self.config['amazon_categories'])}: {category_url}")
                 
                 # Scrape products from Amazon
                 products = self.scraper.get_bestsellers(
@@ -359,8 +372,17 @@ class AmazonPinterestTool:
                     logger.warning(f"No products found for category: {category_url}")
                     continue
                 
+                total_products_scraped += len(products)
+                logger.info(f"Scraped {len(products)} products from category")
+                
+                # Save products for debugging
+                category_name = category_url.split('/')[-1] if '/' in category_url else f"category_{i}"
+                self.save_products_json(products, f"scraped_products_{category_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
+                
                 # Create Pinterest pins
-                for product in products:
+                for j, product in enumerate(products):
+                    logger.info(f"Creating pin {j+1}/{len(products)}: {product.title[:50]}...")
+                    
                     success = self.pinterest.create_pin(
                         product, 
                         self.config['pinterest_board']
@@ -368,21 +390,40 @@ class AmazonPinterestTool:
                     
                     if success:
                         total_pins_created += 1
+                        logger.info(f"✅ Pin created successfully")
+                    else:
+                        logger.warning(f"❌ Failed to create pin")
                     
                     # Delay between pins to avoid rate limiting
-                    time.sleep(self.config['delay_between_pins'])
+                    if j < len(products) - 1:  # Don't delay after last pin
+                        logger.info(f"Waiting {self.config['delay_between_pins']} seconds before next pin...")
+                        time.sleep(self.config['delay_between_pins'])
                 
                 # Delay between categories
-                time.sleep(random.uniform(60, 120))
+                if i < len(self.config['amazon_categories']) - 1:  # Don't delay after last category
+                    delay = random.uniform(60, 120)
+                    logger.info(f"Waiting {delay:.1f} seconds before next category...")
+                    time.sleep(delay)
             
-            logger.info(f"Tool completed successfully! Created {total_pins_created} pins")
+            logger.info(f"Tool completed successfully!")
+            logger.info(f"📊 Final Results:")
+            logger.info(f"  - Products scraped: {total_products_scraped}")
+            logger.info(f"  - Pins created: {total_pins_created}")
+            logger.info(f"  - Success rate: {(total_pins_created/max(total_products_scraped, 1)*100):.1f}%")
+            
+            return True
             
         except Exception as e:
             logger.error(f"Tool execution failed: {e}")
-            raise
+            logger.exception("Full traceback:")
+            return False
         
         finally:
-            self.scraper.close()
+            try:
+                self.scraper.close()
+                logger.info("Scraper closed successfully")
+            except Exception as e:
+                logger.error(f"Error closing scraper: {e}")
     
     def save_products_json(self, products: List[Product], filename: str = None):
         """Save scraped products to JSON file for debugging"""
@@ -410,13 +451,44 @@ class AmazonPinterestTool:
 def main():
     """Main function for command line execution"""
     try:
+        logger.info("="*50)
+        logger.info("Amazon to Pinterest Tool Starting")
+        logger.info("="*50)
+        
+        # Verify environment variables
+        required_vars = ['PINTEREST_EMAIL', 'PINTEREST_PASSWORD', 'AMAZON_AFFILIATE_TAG']
+        missing_vars = [var for var in required_vars if not os.getenv(var)]
+        
+        if missing_vars:
+            logger.error(f"Missing required environment variables: {missing_vars}")
+            logger.error("Please set all required environment variables before running")
+            return False
+        
+        logger.info("All required environment variables found")
+        
+        # Initialize and run tool
         tool = AmazonPinterestTool()
-        tool.run()
+        success = tool.run()
+        
+        if success:
+            logger.info("="*50)
+            logger.info("Tool completed successfully!")
+            logger.info("="*50)
+        else:
+            logger.error("="*50)
+            logger.error("Tool completed with errors!")
+            logger.error("="*50)
+            
+        return success
+        
     except KeyboardInterrupt:
         logger.info("Tool stopped by user")
+        return False
     except Exception as e:
-        logger.error(f"Tool failed: {e}")
-        exit(1)
+        logger.error(f"Tool failed with unexpected error: {e}")
+        logger.exception("Full traceback:")
+        return False
 
 if __name__ == "__main__":
-    main()
+    success = main()
+    exit(0 if success else 1)
