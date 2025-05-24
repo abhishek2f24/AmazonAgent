@@ -1,0 +1,227 @@
+name: Amazon to Pinterest Affiliate Marketing Bot
+
+on:
+  # Run on schedule - daily at 9 AM UTC (adjust timezone as needed)
+  schedule:
+    - cron: '0 9 * * *'  # Daily at 9 AM UTC
+    
+  # Allow manual trigger from GitHub Actions tab
+  workflow_dispatch:
+    inputs:
+      max_products:
+        description: 'Maximum products per category'
+        required: false
+        default: '10'
+        type: string
+      pinterest_board:
+        description: 'Pinterest board name'
+        required: false
+        default: 'Amazon Finds'
+        type: string
+      categories:
+        description: 'Amazon categories (comma-separated URLs)'
+        required: false
+        default: ''
+        type: string
+
+jobs:
+  amazon-pinterest-bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60  # Prevent jobs from running too long
+    
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+        
+    - name: Install Python Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        
+    - name: Setup Chrome Browser
+      uses: browser-actions/setup-chrome@v1
+      with:
+        chrome-version: stable
+        
+    - name: Setup ChromeDriver
+      uses: nanasess/setup-chromedriver@v2
+      with:
+        chromedriver-version: '120.0.6099.109'
+        
+    - name: Verify Chrome and ChromeDriver
+      run: |
+        google-chrome --version
+        chromedriver --version
+        which chromedriver
+        
+    - name: Create Required Directories
+      run: |
+        mkdir -p temp_images
+        mkdir -p logs
+        
+    - name: Set Environment Variables
+      run: |
+        echo "PINTEREST_EMAIL=${{ secrets.PINTEREST_EMAIL }}" >> $GITHUB_ENV
+        echo "PINTEREST_PASSWORD=${{ secrets.PINTEREST_PASSWORD }}" >> $GITHUB_ENV
+        echo "AMAZON_AFFILIATE_TAG=${{ secrets.AMAZON_AFFILIATE_TAG }}" >> $GITHUB_ENV
+        echo "PINTEREST_BOARD=${{ github.event.inputs.pinterest_board || secrets.PINTEREST_BOARD || 'Amazon Finds' }}" >> $GITHUB_ENV
+        echo "MAX_PRODUCTS_PER_CATEGORY=${{ github.event.inputs.max_products || secrets.MAX_PRODUCTS_PER_CATEGORY || '10' }}" >> $GITHUB_ENV
+        echo "DELAY_BETWEEN_PINS=${{ secrets.DELAY_BETWEEN_PINS || '60' }}" >> $GITHUB_ENV
+        
+    - name: Set Amazon Categories
+      run: |
+        if [ -n "${{ github.event.inputs.categories }}" ]; then
+          echo "AMAZON_CATEGORIES=${{ github.event.inputs.categories }}" >> $GITHUB_ENV
+        elif [ -n "${{ secrets.AMAZON_CATEGORIES }}" ]; then
+          echo "AMAZON_CATEGORIES=${{ secrets.AMAZON_CATEGORIES }}" >> $GITHUB_ENV
+        else
+          echo "AMAZON_CATEGORIES=https://www.amazon.com/Best-Sellers-Home-Kitchen/zgbs/home-garden,https://www.amazon.com/Best-Sellers-Electronics/zgbs/electronics,https://www.amazon.com/Best-Sellers-Books/zgbs/books" >> $GITHUB_ENV
+        fi
+        
+    - name: Display Configuration
+      run: |
+        echo "🔧 Configuration:"
+        echo "Pinterest Board: $PINTEREST_BOARD"
+        echo "Max Products per Category: $MAX_PRODUCTS_PER_CATEGORY"
+        echo "Delay Between Pins: $DELAY_BETWEEN_PINS seconds"
+        echo "Amazon Categories: $AMAZON_CATEGORIES"
+        echo "Chrome Path: $(which google-chrome)"
+        echo "ChromeDriver Path: $(which chromedriver)"
+        
+    - name: Test Pinterest Connection
+      run: |
+        python -c "
+        import os
+        from py3pin.Pinterest import Pinterest
+        try:
+            pinterest = Pinterest(email=os.getenv('PINTEREST_EMAIL'), password=os.getenv('PINTEREST_PASSWORD'))
+            boards = pinterest.boards()
+            print(f'✅ Pinterest connection successful! Found {len(boards)} boards')
+            for board in boards[:5]:
+                print(f'  - {board[\"name\"]}')
+        except Exception as e:
+            print(f'❌ Pinterest connection failed: {e}')
+            exit(1)
+        "
+        
+    - name: Run Amazon to Pinterest Bot
+      id: run_bot
+      run: |
+        echo "🚀 Starting Amazon to Pinterest Bot..."
+        python amazon_pinterest_tool.py
+      continue-on-error: true
+      
+    - name: Check Bot Results
+      run: |
+        if [ -f "amazon_pinterest_tool.log" ]; then
+          echo "📊 Bot Execution Summary:"
+          echo "================================"
+          grep -E "(Successfully created pin|Failed to create pin|Successfully scraped|Tool completed)" amazon_pinterest_tool.log | tail -20
+          echo "================================"
+          
+          # Count successful pins
+          SUCCESS_COUNT=$(grep -c "Successfully created pin" amazon_pinterest_tool.log || echo "0")
+          echo "✅ Total pins created: $SUCCESS_COUNT"
+          
+          # Check for errors
+          ERROR_COUNT=$(grep -c "ERROR" amazon_pinterest_tool.log || echo "0")
+          echo "❌ Total errors: $ERROR_COUNT"
+          
+          # Set outputs for summary
+          echo "pins_created=$SUCCESS_COUNT" >> $GITHUB_OUTPUT
+          echo "errors_count=$ERROR_COUNT" >> $GITHUB_OUTPUT
+        else
+          echo "❌ Log file not found"
+          exit 1
+        fi
+        
+    - name: Upload Logs as Artifact
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: bot-logs-${{ github.run_number }}
+        path: |
+          amazon_pinterest_tool.log
+          scraped_products_*.json
+        retention-days: 30
+        
+    - name: Clean Up Temporary Files
+      if: always()
+      run: |
+        rm -rf temp_images/
+        echo "🧹 Cleaned up temporary files"
+        
+    - name: Send Success Notification
+      if: success()
+      run: |
+        echo "🎉 Amazon to Pinterest Bot completed successfully!"
+        echo "Check the logs artifact for detailed results."
+        
+    - name: Send Failure Notification
+      if: failure()
+      run: |
+        echo "💥 Amazon to Pinterest Bot failed!"
+        echo "Check the logs artifact for error details."
+        if [ -f "amazon_pinterest_tool.log" ]; then
+          echo "Last 10 log entries:"
+          tail -10 amazon_pinterest_tool.log
+        fi
+
+  # Optional: Create a summary job
+  summary:
+    needs: amazon-pinterest-bot
+    runs-on: ubuntu-latest
+    if: always()
+    
+    steps:
+    - name: Download Logs
+      uses: actions/download-artifact@v4
+      with:
+        name: bot-logs-${{ github.run_number }}
+        path: ./logs/
+        
+    - name: Generate Summary
+      run: |
+        echo "# 📊 Amazon to Pinterest Bot Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Run Date**: $(date)" >> $GITHUB_STEP_SUMMARY
+        echo "**Status**: ${{ needs.amazon-pinterest-bot.result }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        if [ -f "./logs/amazon_pinterest_tool.log" ]; then
+          SUCCESS_COUNT=$(grep -c "Successfully created pin" ./logs/amazon_pinterest_tool.log || echo "0")
+          ERROR_COUNT=$(grep -c "ERROR" ./logs/amazon_pinterest_tool.log || echo "0")
+          SCRAPED_COUNT=$(grep -c "Successfully scraped" ./logs/amazon_pinterest_tool.log || echo "0")
+          
+          echo "## Results" >> $GITHUB_STEP_SUMMARY
+          echo "- 🎯 **Pins Created**: $SUCCESS_COUNT" >> $GITHUB_STEP_SUMMARY
+          echo "- 📦 **Products Scraped**: $SCRAPED_COUNT" >> $GITHUB_STEP_SUMMARY
+          echo "- ❌ **Errors**: $ERROR_COUNT" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Show recent successful pins
+          echo "## Recent Successful Pins" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          grep "Successfully created pin" ./logs/amazon_pinterest_tool.log | tail -5 >> $GITHUB_STEP_SUMMARY || echo "No successful pins found"
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          
+          # Show any errors
+          if [ "$ERROR_COUNT" -gt "0" ]; then
+            echo "## Recent Errors" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            grep "ERROR" ./logs/amazon_pinterest_tool.log | tail -3 >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          fi
+        else
+          echo "❌ **No log file found**" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "---" >> $GITHUB_STEP_SUMMARY
+        echo "*Bot run completed at $(date)*" >> $GITHUB_STEP_SUMMARY
